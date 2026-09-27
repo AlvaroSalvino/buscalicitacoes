@@ -30,7 +30,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
 
     'rest_framework',
-    
+
     'core',
 ]
 
@@ -44,7 +44,7 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-ROOT_URLCONF = 'licitacoes.urls'
+ROOT_URLCONF = 'buscalicitacoes.urls'
 
 TEMPLATES = [
     {
@@ -61,7 +61,7 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = 'licitacoes.wsgi.application'
+WSGI_APPLICATION = 'buscalicitacoes.wsgi.application'
 
 
 # Database
