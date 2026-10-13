@@ -36,14 +36,18 @@ venv/
 **/__pycache__/
 **/*.py[cod]
 
-# Banco de dados SQLite
+# Banco de dados SQLite (inclui os arquivos do modo WAL: -wal e -shm) e backups
 db.sqlite3
 *.sqlite3
+*.sqlite3-*
+*.sqlite3.*
+*.corrompido
+backups/
 
-# Arquivos de ambiente
+# Arquivos de ambiente (o .env.example é só um modelo, sem segredos: fica versionado)
 .env
 *.env
-.env.example
+!.env.example
 
 # Static coletado pelo Django
 staticfiles/

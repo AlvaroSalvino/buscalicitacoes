@@ -4,42 +4,144 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+
+# Nunca dois deploys ao mesmo tempo (ex.: dois pushes seguidos).
+concurrency:
+  group: deploy-producao
+  cancel-in-progress: false
+
+env:
+  APP_DIR: /home/meu_app/public_html/buscalicitacoes
+  APP_USER: www-data            # mesmo usuário do WSGIDaemonProcess/Apache
+  SITE_URL: https://licitacoes.meuapp.dev.br
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # 1) Só segue para produção se o projeto estiver íntegro.
+  # ---------------------------------------------------------------------------
+  test:
+    name: Testes e verificações
+    runs-on: ubuntu-latest
+    env:
+      SECRET_KEY: ci-nao-e-segredo
+      DEBUG: "False"
+      DB_ENGINE: sqlite
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Banco de dados ou segredos versionados? (bloqueia o deploy)
+        run: |
+          if git ls-files | grep -Ei '\.sqlite3|(^|/)\.env$|\.corrompido$'; then
+            echo "::error::Arquivos de banco/.env estão no git (listados acima). Remova com: git rm --cached <arquivo>"
+            exit 1
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Dependências do sistema (mysqlclient)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config default-libmysqlclient-dev
+
+      - name: Instalar dependências
+        run: python -m pip install -r requirements.txt
+
+      - name: Django check
+        run: python manage.py check
+
+      - name: Migrações versionadas? (falha se faltar arquivo de migração no git)
+        run: python manage.py makemigrations --check --dry-run
+
+      - name: Testes
+        run: python manage.py test
+
+  # ---------------------------------------------------------------------------
+  # 2) Deploy. Não mexe em .env, venv, banco, media nem dispara sincronizações.
+  # ---------------------------------------------------------------------------
   deploy:
     name: Deploy via SSH
+    needs: test
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout do código
-        uses: actions/checkout@v3
-
       - name: Deploy para o servidor
         uses: appleboy/ssh-action@v1.0.3
         with:
-          debug: true
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script_stop: true
+          envs: APP_DIR,APP_USER,SITE_URL
           script: |
-            cd /home/meu_app/public_html/buscalicitacoes
-            git pull origin main
-            source venv/bin/activate
-            python -m pip install -r requirements.txt
-            python manage.py collectstatic --noinput
-            python manage.py migrate
+            set -euo pipefail
+            cd "$APP_DIR"
+            PY="$APP_DIR/venv/bin/python"
+            # Todo comando Python/Django roda como o usuário do Apache: assim os
+            # arquivos do SQLite (-wal/-shm) nunca ficam com dono root.
+            run() { sudo -u "$APP_USER" "$@"; }
 
-            # ====== SQLite permissions ======
-            sudo chown www-data:www-data db.sqlite3
-            sudo chmod 664 db.sqlite3
+            PREV=$(git rev-parse HEAD)
+            trap 'echo "### FALHA no deploy. Versão anterior: $PREV | backups em $APP_DIR/backups"' ERR
 
-            # Permissão no diretório do projeto (necessário para lock do sqlite)
-            sudo chown -R www-data:www-data .
-            sudo find . -type d -exec chmod 755 {} \;
-            sudo find . -type f -exec chmod 664 {} \;
+            echo "== 1/7 Backup do banco (antes de QUALQUER mudança)"
+            mkdir -p backups && sudo chown "$APP_USER:$APP_USER" backups
+            if [ -f db.sqlite3 ]; then
+              # .backup é seguro com o banco em uso (inclui o conteúdo do WAL)
+              run sqlite3 db.sqlite3 ".backup 'backups/db-$(date +%Y%m%d-%H%M%S).sqlite3'"
+              ls -1t backups/db-*.sqlite3 2>/dev/null | tail -n +4 | xargs -r rm -f   # mantém os 3 mais recentes
+            fi
 
-            # Corrigir permissões para o Apache
-            sudo chown -R www-data:www-data staticfiles
-            sudo chmod -R 755 staticfiles
+            echo "== 2/7 Código"
+            # Arquivos do banco NUNCA podem ser tocados pelo git. Versões antigas do
+            # repositório versionavam db.sqlite3-wal/-shm (do computador de
+            # desenvolvimento): um reset --hard os sobrescreveria e corromperia o
+            # banco do servidor. Tirá-los do índice local antes do reset garante
+            # que o git os trate como arquivos não rastreados e não mexa neles.
+            git rm --cached -f -q --ignore-unmatch -- db.sqlite3 db.sqlite3-wal db.sqlite3-shm
+            git fetch origin main
+            git reset --hard origin/main      # só arquivos versionados; .env, banco e venv ficam intactos
+            NEW=$(git rev-parse HEAD)
+            echo "   $PREV -> $NEW"
+            if git ls-files | grep -Ei '\.sqlite3|^\.env$'; then
+              echo "### O repositório versiona arquivos de banco/.env (listados acima). Abortando."
+              exit 1
+            fi
 
-            touch buscalicitacoes/wsgi.py
+            echo "== 3/7 Permissões (sem tocar em venv/ e .git/)"
+            sudo find . \( -path ./venv -o -path ./.git \) -prune -o -exec chown "$APP_USER:$APP_USER" {} +
+            [ "$(stat -c %U venv)" = "$APP_USER" ] || sudo chown -R "$APP_USER:$APP_USER" venv
+
+            echo "== 4/7 Dependências"
+            run "$PY" -m pip install -q -r requirements.txt
+
+            echo "== 5/7 Verificar, migrar e coletar estáticos"
+            run "$PY" manage.py check
+            run "$PY" manage.py migrate --noinput
+            run "$PY" manage.py collectstatic --noinput
+
+            echo "== 6/7 Recarregar aplicação"
+            run touch buscalicitacoes/wsgi.py          # mod_wsgi (daemon) recarrega o código
+            for u in celery-worker celery-beat; do
+              if systemctl list-unit-files | grep -q "^$u.service"; then
+                sudo systemctl restart "$u"
+              fi
+            done
+
+            echo "== 7/7 Verificação de saúde"
+            sleep 5
+            home=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$SITE_URL/" || true)
+            api=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$SITE_URL/api/licitacoes/" || true)
+            echo "   /=$home (esperado 200)  /api/licitacoes/=$api (esperado 401)"
+            if [ "$home" != "200" ] || [ "$api" != "401" ]; then
+              echo "### Verificação falhou: voltando o código para $PREV"
+              git reset --hard "$PREV"
+              sudo find . \( -path ./venv -o -path ./.git \) -prune -o -exec chown "$APP_USER:$APP_USER" {} +
+              run "$PY" manage.py collectstatic --noinput || true
+              run touch buscalicitacoes/wsgi.py
+              echo "### Atenção: migrações já aplicadas NÃO são desfeitas. Backup: $APP_DIR/backups"
+              exit 1
+            fi
+            echo "Deploy concluído: $NEW"
