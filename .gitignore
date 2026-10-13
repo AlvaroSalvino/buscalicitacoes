@@ -43,6 +43,7 @@ db.sqlite3
 # Arquivos de ambiente
 .env
 *.env
+.env.example
 
 # Static coletado pelo Django
 staticfiles/
@@ -55,3 +56,6 @@ github-actions
 github-actions.pub
 deploy.sh
 virtualhost.txt
+
+# Celery beat
+celerybeat-schedule*

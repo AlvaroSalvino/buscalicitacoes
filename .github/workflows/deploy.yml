@@ -1,0 +1,45 @@
+name: Deploy para produção
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Deploy via SSH
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v3
+
+      - name: Deploy para o servidor
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          debug: true
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd /home/meu_app/public_html/buscalicitacoes
+            git pull origin main
+            source venv/bin/activate
+            python -m pip install -r requirements.txt
+            python manage.py collectstatic --noinput
+            python manage.py migrate
+
+            # ====== SQLite permissions ======
+            sudo chown www-data:www-data db.sqlite3
+            sudo chmod 664 db.sqlite3
+
+            # Permissão no diretório do projeto (necessário para lock do sqlite)
+            sudo chown -R www-data:www-data .
+            sudo find . -type d -exec chmod 755 {} \;
+            sudo find . -type f -exec chmod 664 {} \;
+
+            # Corrigir permissões para o Apache
+            sudo chown -R www-data:www-data staticfiles
+            sudo chmod -R 755 staticfiles
+
+            touch buscalicitacoes/wsgi.py

@@ -1,0 +1,11 @@
+.git
+.gitignore
+**/__pycache__/
+**/*.pyc
+venv/
+.env
+db.sqlite3
+staticfiles/
+media/
+node_modules/
+*.log
