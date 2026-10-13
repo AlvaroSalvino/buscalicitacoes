@@ -3,7 +3,7 @@
  * - GET /api/licitacoes*: network-first, cai no cache se estiver offline.
  * - Demais chamadas de API (auth, alertas, notificações): nunca cacheadas.
  */
-const VERSAO = "v2";
+const VERSAO = "v3";
 const CACHE_SHELL = `shell-${VERSAO}`;
 const CACHE_API = `api-${VERSAO}`;
 const SHELL = [

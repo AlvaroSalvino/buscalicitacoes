@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&display=swap">
-  <link rel="stylesheet" href="{% static 'app/app.css' %}">
+  <link rel="stylesheet" href="{% static 'app/app.css' %}?v={{ asset_version }}">
 </head>
 <body>
   <div id="app">
@@ -55,6 +55,6 @@
   <div class="sheet" id="sheet" role="dialog" aria-modal="true" hidden></div>
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
   <noscript>Este aplicativo precisa de JavaScript.</noscript>
-  <script src="{% static 'app/app.js' %}"></script>
+  <script src="{% static 'app/app.js' %}?v={{ asset_version }}"></script>
 </body>
 </html>
