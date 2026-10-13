@@ -1,5 +1,7 @@
 from django.db import models
 
+from .textos import texto_busca
+
 
 class Orgao(models.Model):
     """Órgão público que publica licitações (federal, estadual ou municipal)."""
@@ -93,6 +95,11 @@ class Licitacao(models.Model):
     municipio = models.CharField(max_length=150, blank=True, default="")
     link_original = models.URLField(max_length=500, blank=True, default="")
 
+    # Objeto + nome do órgão, sem acento/caixa/pontuação. Mantido em save();
+    # é o que a busca por palavra-chave consulta (o LIKE do SQLite não ignora
+    # acentos nem caixa fora do ASCII).
+    texto_busca = models.TextField(blank=True, default="", editable=False)
+
     # Permite linkar duplicatas da mesma licitação encontradas em portais
     # diferentes (ex: mesma licitação no PNCP e num portal estadual).
     licitacao_matriz = models.ForeignKey(
@@ -118,6 +125,13 @@ class Licitacao(models.Model):
             models.Index(fields=["data_encerramento_propostas"]),
             models.Index(fields=["uf"]),
         ]
+
+    def save(self, *args, **kwargs):
+        self.texto_busca = texto_busca(self.objeto, self.orgao.razao_social)
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None:
+            kwargs["update_fields"] = set(update_fields) | {"texto_busca"}
+        super().save(*args, **kwargs)
 
     def __str__(self):
         identificador = self.numero or self.id_externo

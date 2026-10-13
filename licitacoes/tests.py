@@ -120,6 +120,34 @@ class LicitacaoAPITests(TestCase):
     def test_palavras_e_outros_filtros_combinam(self):
         self.assertEqual(self._ids(palavras="limpeza,computadores", uf="SP"), {self.l1.id, self.l3.id})
 
+    def test_busca_ignora_acento_e_caixa(self):
+        Licitacao.objects.create(
+            orgao=self.orgao_sp, fonte=self.fonte, id_externo="9",
+            objeto="CONTRATAÇÃO DE ASSESSORIA DE COMUNICAÇÃO INSTITUCIONAL", uf="SP",
+        )
+        achou = self._ids(palavras="comunicação institucional")
+        self.assertEqual(len(achou), 1)
+        self.assertEqual(self._ids(q="comunicacao"), achou)
+        self.assertEqual(self._ids(palavras="ASSESSORIA"), achou)
+
+    def test_q_com_virgula_e_qualquer_uma(self):
+        # espaço = todas; vírgula = qualquer uma
+        self.assertEqual(self._ids(q="computadores limpeza"), set())
+        self.assertEqual(self._ids(q="computadores, limpeza"), {self.l1.id, self.l2.id, self.l3.id})
+        self.assertEqual(self._ids(q="computadores, inexistente"), {self.l1.id})
+
+    def test_termo_curto_so_palavra_inteira(self):
+        Licitacao.objects.create(
+            orgao=self.orgao_sp, fonte=self.fonte, id_externo="tv1",
+            objeto="Produção de conteúdo para a TV Cidade", uf="SP",
+        )
+        Licitacao.objects.create(
+            orgao=self.orgao_sp, fonte=self.fonte, id_externo="tv2",
+            objeto="Aquisição de eletrodomésticos e equipamentos", uf="SP",  # 'tv' nao esta como palavra
+        )
+        achou = self._ids(palavras="tv")
+        self.assertEqual(len(achou), 1)
+
     def test_exige_login(self):
         r = self.client.get(reverse("licitacao-list"))
         self.assertEqual(r.status_code, 401)

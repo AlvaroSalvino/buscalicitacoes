@@ -3,6 +3,7 @@ from django.utils import timezone
 from django_filters import rest_framework as filters
 
 from .models import Licitacao
+from .textos import condicao_termo, normalizar
 
 MAX_PALAVRAS = 30       # palavras-chave por busca/alerta
 MAX_TAMANHO_PALAVRA = 60
@@ -16,8 +17,9 @@ class LicitacaoFilter(filters.FilterSet):
     q = filters.CharFilter(
         method="filtrar_q",
         help_text=(
-            "Palavra-chave. Cada termo (separado por espaço) precisa aparecer "
-            "no objeto, número ou nome do órgão."
+            "Palavra-chave, sem diferenciar acento/maiúsculas. Separada por "
+            "espaço: TODAS as palavras precisam aparecer. Separada por vírgula: "
+            "QUALQUER uma das alternativas (ex: 'tv, marketing digital, vídeo')."
         ),
     )
     palavras = CharInFilter(
@@ -81,28 +83,36 @@ class LicitacaoFilter(filters.FilterSet):
         model = Licitacao
         fields = []
 
+    @staticmethod
+    def _qualquer(queryset, termos):
+        """OR entre os termos (já separados); cada um é normalizado (sem acento/caixa)."""
+        vistos, cond = [], Q()
+        for t in termos:
+            n = normalizar(t)
+            if not n or n in vistos:
+                continue
+            vistos.append(n)
+            if len(vistos) > MAX_PALAVRAS:
+                break
+            cond |= Q(texto_busca__icontains=condicao_termo(n))
+        return queryset.filter(cond) if vistos else queryset
+
     def filtrar_q(self, queryset, name, value):
+        # Com vírgula: lista de alternativas (qualquer uma). Sem vírgula: todas as
+        # palavras precisam aparecer (espaço = E), no objeto, número ou órgão.
+        if "," in value:
+            return self._qualquer(queryset, value.split(","))
         for termo in value.split():
+            n = normalizar(termo)
+            if not n:
+                continue
             queryset = queryset.filter(
-                Q(objeto__icontains=termo)
-                | Q(numero__icontains=termo)
-                | Q(orgao__razao_social__icontains=termo)
+                Q(texto_busca__icontains=condicao_termo(n)) | Q(numero__icontains=termo)
             )
         return queryset
 
     def filtrar_palavras(self, queryset, name, value):
-        termos = []
-        for t in value:
-            t = " ".join(t.split())  # normaliza espaços
-            if t and t.lower() not in [x.lower() for x in termos]:
-                termos.append(t)
-        termos = termos[:MAX_PALAVRAS]
-        if not termos:
-            return queryset
-        cond = Q()
-        for t in termos:
-            cond |= Q(objeto__icontains=t) | Q(orgao__razao_social__icontains=t)
-        return queryset.filter(cond)
+        return self._qualquer(queryset, value)
 
     def filtrar_uf(self, queryset, name, value):
         return queryset.filter(uf__in=[u.strip().upper() for u in value if u.strip()])
