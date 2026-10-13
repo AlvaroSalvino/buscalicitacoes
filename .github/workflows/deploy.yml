@@ -83,6 +83,13 @@ jobs:
             # arquivos do SQLite (-wal/-shm) nunca ficam com dono root.
             run() { sudo -u "$APP_USER" "$@"; }
 
+            # A raiz do projeto pertence ao www-data (para o SQLite), mas o git roda
+            # como o usuário do SSH: sem isto o git recusa o repositório
+            # ("dubious ownership"). .git fica sempre do usuário do deploy.
+            git config --global --get-all safe.directory | grep -qx "$APP_DIR" \
+              || git config --global --add safe.directory "$APP_DIR"
+            [ "$(stat -c %U .git)" = "$(id -un)" ] || sudo chown -R "$(id -un):$(id -gn)" .git
+
             PREV=$(git rev-parse HEAD)
             trap 'echo "### FALHA no deploy. Versão anterior: $PREV | backups em $APP_DIR/backups"' ERR
 
