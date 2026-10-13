@@ -147,3 +147,83 @@ class ConviteTests(TestCase):
         self.assertEqual(r.json()[0]["status"], "pendente")
         self.assertNotIn("token", r.json()[0])
         self.assertNotIn("link", r.json()[0])
+
+
+class RedefinirSenhaTests(TestCase):
+    def setUp(self):
+        self.admin = User.objects.create_superuser("admin", "admin@x.com", SENHA)
+        self.ana = User.objects.create_user("ana", "ana@x.com", SENHA)
+        self.h = bearer(self.client, "admin")
+
+    def _enviar(self, email="ana@x.com", h=None):
+        return self.client.post(
+            reverse("senha-enviar"), {"email": email},
+            content_type="application/json", **(self.h if h is None else h),
+        )
+
+    def _uid_token(self, link):
+        from urllib.parse import parse_qs
+        q = parse_qs(link.split("?", 1)[1])
+        return q["uid"][0], q["token"][0]
+
+    def test_fluxo_completo(self):
+        r = self._enviar("ANA@x.com")
+        self.assertEqual(r.status_code, 200, r.content)
+        dados = r.json()
+        self.assertTrue(dados["email_enviado"])
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ["ana@x.com"])
+        uid, token = self._uid_token(dados["link"])
+        self.assertIn(token, mail.outbox[0].body)
+
+        r = self.client.get(reverse("senha-validar"), {"uid": uid, "token": token})
+        self.assertEqual(r.json()["username"], "ana")
+
+        r = self.client.post(reverse("senha-confirmar"), {
+            "uid": uid, "token": token, "password": "Nova-Senha-987",
+        })
+        self.assertEqual(r.status_code, 204, r.content)
+        self.assertTrue(User.objects.get(username="ana").check_password("Nova-Senha-987"))
+        # login com a nova senha; a antiga não vale mais
+        self.assertEqual(self.client.post(
+            reverse("token-obtain"), {"username": "ana", "password": "Nova-Senha-987"}).status_code, 200)
+        self.assertEqual(self.client.post(
+            reverse("token-obtain"), {"username": "ana", "password": SENHA}).status_code, 401)
+        # link de uso único
+        r = self.client.post(reverse("senha-confirmar"), {
+            "uid": uid, "token": token, "password": "Outra-Senha-654",
+        })
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(
+            self.client.get(reverse("senha-validar"), {"uid": uid, "token": token}).status_code, 404)
+
+    def test_so_superusuario_envia(self):
+        h = bearer(self.client, "ana")
+        self.assertEqual(self._enviar("admin@x.com", h=h).status_code, 403)
+        self.assertEqual(len(mail.outbox), 0)
+        r = self.client.post(
+            reverse("senha-enviar"), {"email": "ana@x.com"}, content_type="application/json")
+        self.assertEqual(r.status_code, 401)
+
+    def test_email_inexistente_ou_inativo(self):
+        self.assertEqual(self._enviar("ninguem@x.com").status_code, 404)
+        User.objects.filter(username="ana").update(is_active=False)
+        self.assertEqual(self._enviar("ana@x.com").status_code, 404)
+
+    def test_senha_fraca_nao_consome_link(self):
+        uid, token = self._uid_token(self._enviar().json()["link"])
+        r = self.client.post(reverse("senha-confirmar"), {
+            "uid": uid, "token": token, "password": "123",
+        })
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("password", r.json())
+        self.assertEqual(
+            self.client.get(reverse("senha-validar"), {"uid": uid, "token": token}).status_code, 200)
+
+    def test_token_adulterado(self):
+        uid, token = self._uid_token(self._enviar().json()["link"])
+        r = self.client.post(reverse("senha-confirmar"), {
+            "uid": uid, "token": token[:-3] + "xyz", "password": "Nova-Senha-987",
+        })
+        self.assertEqual(r.status_code, 400)
+        self.assertTrue(User.objects.get(username="ana").check_password(SENHA))

@@ -222,3 +222,6 @@ VAPID_CLAIMS_EMAIL = os.getenv("VAPID_CLAIMS_EMAIL", "admin@localhost")
 
 # Convites de cadastro (accounts.Convite): validade em dias.
 CONVITE_VALIDADE_DIAS = int(os.getenv("CONVITE_VALIDADE_DIAS", "7"))
+
+# Validade do link de redefinição de senha (segundos; padrão 24h).
+PASSWORD_RESET_TIMEOUT = int(os.getenv("PASSWORD_RESET_TIMEOUT", "86400"))

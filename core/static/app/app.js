@@ -181,7 +181,7 @@
     if (!r.ok) {
       if (r.status === 401 && auth) {
         session.clear(); state.user = null;
-        if (!/^#\/(login|cadastro)/.test(location.hash)) { state.next = location.hash; location.hash = "#/login"; }
+        if (!/^#\/(login|cadastro|redefinir-senha)/.test(location.hash)) { state.next = location.hash; location.hash = "#/login"; }
       }
       throw new ApiError(r.status, data);
     }
@@ -555,6 +555,62 @@
     };
   }
 
+  async function telaRedefinirSenha(query) {
+    setChrome({ titulo: "Nova senha" });
+    $("#tabbar").classList.add("hidden");
+    view().classList.add("no-tabbar");
+    const q = new URLSearchParams(query);
+    const uid = q.get("uid") || "", token = q.get("token") || "";
+    view().innerHTML = val(carregando());
+
+    const invalido = (msg) => {
+      view().innerHTML = val(html`<div class="stack">${vazio("Link indisponível", msg,
+        html`<p style="margin-top:16px"><a class="btn" href="#/login">Ir para o login</a></p>`)}</div>`);
+    };
+    if (!uid || !token) return invalido("O link está incompleto. Use o link enviado por e-mail.");
+    let info;
+    try {
+      info = await api(`/auth/senha/validar/?uid=${encodeURIComponent(uid)}&token=${encodeURIComponent(token)}`, { auth: false });
+    } catch (e) {
+      return invalido(e.status === 404 ? "Este link é inválido, expirou ou já foi utilizado. Peça um novo ao administrador." : e.texto);
+    }
+
+    view().innerHTML = val(html`
+      <form class="stack" id="form-nova-senha" novalidate>
+        <div class="hero"><img src="/static/app/icon-192.png" alt=""><h2>Crie uma nova senha</h2>
+          <p class="muted">Conta <b>${info.username}</b></p></div>
+        <div class="field"><label>Nova senha</label>
+          <input class="input" name="password" type="password" autocomplete="new-password" minlength="8" required>
+          <span class="error" data-erro="password"></span></div>
+        <div class="field"><label>Repita a nova senha</label>
+          <input class="input" name="password2" type="password" autocomplete="new-password" minlength="8" required></div>
+        <p class="small muted">Mínimo de 8 caracteres, sem ser comum ou só números.</p>
+        <p class="error small" id="erro" style="color:var(--secondary)" hidden></p>
+        <button class="btn block">Salvar nova senha</button>
+      </form>`);
+    $("#form-nova-senha").onsubmit = async (e) => {
+      e.preventDefault();
+      const f = e.target, btn = $("button", f), erro = $("#erro");
+      erro.hidden = true;
+      $$("[data-erro]").forEach((x) => (x.textContent = ""));
+      if (f.password.value !== f.password2.value) {
+        erro.textContent = "As senhas não conferem."; erro.hidden = false; return;
+      }
+      btn.disabled = true;
+      try {
+        await api("/auth/senha/confirmar/", { method: "POST", auth: false, body: { uid, token, password: f.password.value } });
+        session.clear(); state.user = null;
+        toast("Senha alterada. Entre com a nova senha.");
+        location.hash = "#/login";
+      } catch (err) {
+        btn.disabled = false;
+        const d = err.data || {};
+        if (d.password) $('[data-erro="password"]').textContent = [].concat(d.password).join(" ");
+        else { erro.textContent = err.texto; erro.hidden = false; }
+      }
+    };
+  }
+
   function exigirLogin() {
     if (session.get()) return true;
     state.next = location.hash;
@@ -737,12 +793,22 @@
             <button class="btn">Enviar convite</button>
           </form>
           <div id="convites-lista"></div>
+        </div>
+        <div class="card stack">
+          <div><b>Redefinir senha de um usuário</b>
+            <div class="small muted">Enviamos um e-mail com um link para a pessoa criar uma nova senha.</div></div>
+          <form class="stack" id="form-senha" novalidate>
+            <div class="field"><label>E-mail do usuário</label>
+              <input class="input" type="email" name="email" inputmode="email" autocapitalize="none" placeholder="nome@exemplo.com" required></div>
+            <p class="small" id="erro-senha" style="color:var(--secondary)" hidden></p>
+            <button class="btn secondary">Enviar e-mail de redefinição</button>
+          </form>
         </div>` : ""}
         ${pushHTML}
         ${instalarHTML()}
         <button class="btn ghost red block" data-act="sair">Sair da conta</button>
       </div>`);
-    if (u.is_superuser) montarConvites();
+    if (u.is_superuser) { montarConvites(); montarSenha(); }
     $("#form-conta").onsubmit = async (e) => {
       e.preventDefault();
       try {
@@ -791,6 +857,33 @@
     };
   }
 
+  function montarSenha() {
+    $("#form-senha").onsubmit = async (e) => {
+      e.preventDefault();
+      const f = e.target, btn = $("button", f), erro = $("#erro-senha");
+      erro.hidden = true;
+      btn.disabled = true;
+      try {
+        const r = await api("/auth/senha/enviar/", { method: "POST", body: { email: f.email.value.trim() } });
+        f.reset();
+        state.ultimoLink = r.link;
+        abrirSheet(html`
+          <h2 class="title">${r.email_enviado ? "E-mail enviado" : "Link gerado"}</h2>
+          <p class="muted" style="margin:8px 0 12px">${r.email_enviado
+            ? `Enviamos o link de redefinição para ${r.email}. Você também pode copiá-lo:`
+            : "Não conseguimos enviar o e-mail. Envie este link manualmente:"}</p>
+          <input class="input" readonly value="${r.link}" aria-label="Link de redefinição">
+          <div class="grid2" style="margin-top:12px">
+            <button class="btn ghost" data-fechar>Fechar</button>
+            <button class="btn" data-act="copiar-link">Copiar link</button>
+          </div>`);
+      } catch (err) {
+        erro.textContent = err.texto; erro.hidden = false;
+      }
+      btn.disabled = false;
+    };
+  }
+
   function mostrarLinkConvite(r) {
     abrirSheet(html`
       <h2 class="title">${r.email_enviado ? "Convite enviado" : "Convite criado"}</h2>
@@ -821,6 +914,7 @@
     [/^\/licitacao\/(\d+)$/, (m) => telaDetalhe(m[1])],
     [/^\/login$/, () => telaLogin()],
     [/^\/cadastro$/, (m, q) => telaCadastro(q)],
+    [/^\/redefinir-senha$/, (m, q) => telaRedefinirSenha(q)],
     [/^\/alertas$/, () => telaAlertas()],
     [/^\/alertas\/novo$/, () => telaAlertaForm(null, state.rascunhoFiltros)],
     [/^\/alertas\/(\d+)\/editar$/, (m) => telaAlertaForm(m[1])],
@@ -833,7 +927,7 @@
     fecharSheet();
     const [path, query = ""] = (location.hash.slice(1) || "/").split("?");
     // App fechado: sem sessão só existem login e cadastro por convite.
-    if (!session.get() && path !== "/login" && path !== "/cadastro") {
+    if (!session.get() && !["/login", "/cadastro", "/redefinir-senha"].includes(path)) {
       if (path !== "/") state.next = location.hash;
       location.hash = "#/login";
       return;

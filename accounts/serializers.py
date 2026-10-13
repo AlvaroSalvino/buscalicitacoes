@@ -70,6 +70,16 @@ class ConviteSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class SenhaEnviarSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+
+class SenhaConfirmarSerializer(serializers.Serializer):
+    uid = serializers.CharField()
+    token = serializers.CharField()
+    password = serializers.CharField(style={"input_type": "password"})
+
+
 class ConviteCriarSerializer(serializers.Serializer):
     email = serializers.EmailField()
 
