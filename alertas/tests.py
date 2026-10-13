@@ -100,10 +100,10 @@ class PalavrasChaveTests(TestCase):
         self.assertEqual(casadas, {self.l["nb"].pk, self.l["imp"].pk, self.l["lim"].pk})
 
     def test_limites(self):
-        muitas = [f"palavra{i}" for i in range(31)]
+        muitas = [f"palavra{i}" for i in range(61)]
         self.assertEqual(self._criar({"palavras": muitas}).status_code, 400)
         self.assertEqual(self._criar({"palavras": ["x" * 61]}).status_code, 400)
-        self.assertEqual(self._criar({"palavras": [f"p{i}" for i in range(30)]}).status_code, 201)
+        self.assertEqual(self._criar({"palavras": [f"p{i}" for i in range(60)]}).status_code, 201)
 
 
 class MatchingTests(TestCase):

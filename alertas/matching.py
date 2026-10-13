@@ -36,7 +36,7 @@ def validar(filtros):
     fs = LicitacaoFilter(data=dados, queryset=Licitacao.objects.none())
     if not fs.is_valid():
         return dados, {"filtros": [f"{k}: {' '.join(v)}" for k, v in fs.errors.items()]}
-    if not dados:
+    if not (set(dados) - {"combinar"}):
         return dados, {"filtros": ["Informe ao menos um filtro."]}
     return dados, {}
 

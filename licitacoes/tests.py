@@ -148,6 +148,48 @@ class LicitacaoAPITests(TestCase):
         achou = self._ids(palavras="tv")
         self.assertEqual(len(achou), 1)
 
+    def test_palavra_curta_so_inteira_ou_plural(self):
+        Licitacao.objects.create(
+            orgao=self.orgao_sp, fonte=self.fonte, id_externo="c1",
+            objeto="Aquisição de materiais para contratos administrativos", uf="SP",
+        )
+        Licitacao.objects.create(
+            orgao=self.orgao_sp, fonte=self.fonte, id_externo="c2",
+            objeto="Publicação de atos oficiais", uf="SP",
+        )
+        achou = self._ids(palavras="atos")  # 'contratos' NAO pode casar
+        self.assertEqual(len(achou), 1)
+        Licitacao.objects.create(
+            orgao=self.orgao_sp, fonte=self.fonte, id_externo="c3",
+            objeto="Execução de obras de drenagem", uf="SP",
+        )
+        self.assertEqual(len(self._ids(palavras="obra")), 1)  # plural simples
+
+    def test_modo_somar_une_palavra_e_modalidade(self):
+        # l1 pregao/'computadores' SP, l2 dispensa/'limpeza hospitalar' RJ, l3 pregao/'Material de limpeza' SP
+        # todos (padrão): palavra E modalidade
+        self.assertEqual(self._ids(palavras="hospitalar", modalidade="pregao"), set())
+        # somar: palavra OU modalidade
+        self.assertEqual(
+            self._ids(palavras="hospitalar", modalidade="pregao", combinar="qualquer"),
+            {self.l1.id, self.l2.id, self.l3.id},
+        )
+        # UF continua restringindo no modo somar
+        self.assertEqual(
+            self._ids(palavras="hospitalar", modalidade="pregao", combinar="qualquer", uf="SP"),
+            {self.l1.id, self.l3.id},
+        )
+        # só palavra (sem modalidade): igual ao modo restrito
+        self.assertEqual(self._ids(palavras="hospitalar", combinar="qualquer"), {self.l2.id})
+        # sem critérios de interesse: nada some
+        self.assertEqual(self._ids(combinar="qualquer", uf="RJ"), {self.l2.id})
+
+    def test_modo_somar_com_q_lista(self):
+        self.assertEqual(
+            self._ids(q="computadores, inexistente", modalidade="dispensa", combinar="qualquer"),
+            {self.l1.id, self.l2.id},
+        )
+
     def test_exige_login(self):
         r = self.client.get(reverse("licitacao-list"))
         self.assertEqual(r.status_code, 401)

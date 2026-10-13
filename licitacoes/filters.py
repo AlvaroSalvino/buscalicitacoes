@@ -3,14 +3,51 @@ from django.utils import timezone
 from django_filters import rest_framework as filters
 
 from .models import Licitacao
-from .textos import condicao_termo, normalizar
+from .textos import agulhas, normalizar
 
-MAX_PALAVRAS = 30       # palavras-chave por busca/alerta
+MAX_PALAVRAS = 60       # palavras-chave por busca/alerta
 MAX_TAMANHO_PALAVRA = 60
+
+# Em combinar=qualquer, estes filtros "somam" (OU entre si); os demais
+# (UF, situação, prazo, valor, datas...) continuam restringindo (E).
+FILTROS_DE_INTERESSE = ("q", "palavras", "modalidade", "orgao")
 
 
 class CharInFilter(filters.BaseInFilter, filters.CharFilter):
     """Aceita lista separada por vírgula (?uf=SP,RJ)."""
+
+
+def _q_agulhas(termo_normalizado):
+    cond = Q()
+    for a in agulhas(termo_normalizado):
+        cond |= Q(texto_busca__icontains=a)
+    return cond
+
+
+def q_qualquer(termos):
+    """OR entre os termos (cada um normalizado: sem acento/caixa). None se vazio."""
+    vistos, cond = [], Q()
+    for t in termos:
+        n = normalizar(t)
+        if not n or n in vistos:
+            continue
+        vistos.append(n)
+        if len(vistos) > MAX_PALAVRAS:
+            break
+        cond |= _q_agulhas(n)
+    return cond if vistos else None
+
+
+def q_todas(texto):
+    """E entre as palavras (separadas por espaço), no objeto/órgão ou no número."""
+    cond = None
+    for termo in texto.split():
+        n = normalizar(termo)
+        if not n:
+            continue
+        c = _q_agulhas(n) | Q(numero__icontains=termo)
+        cond = c if cond is None else cond & c
+    return cond
 
 
 class LicitacaoFilter(filters.FilterSet):
@@ -69,6 +106,17 @@ class LicitacaoFilter(filters.FilterSet):
         ),
     )
 
+    combinar = filters.ChoiceFilter(
+        choices=[("todos", "Todos os filtros"), ("qualquer", "Somar critérios")],
+        method="nao_filtra",
+        help_text=(
+            "todos (padrão): a licitação precisa atender a TODOS os filtros. "
+            "qualquer: os critérios de interesse (q, palavras, modalidade, orgao) "
+            "SOMAM-se (basta casar com um deles); UF, status, abertas, datas e "
+            "valores continuam restringindo."
+        ),
+    )
+
     ordering = filters.OrderingFilter(
         fields=(
             ("data_publicacao", "data_publicacao"),
@@ -83,36 +131,53 @@ class LicitacaoFilter(filters.FilterSet):
         model = Licitacao
         fields = []
 
-    @staticmethod
-    def _qualquer(queryset, termos):
-        """OR entre os termos (já separados); cada um é normalizado (sem acento/caixa)."""
-        vistos, cond = [], Q()
-        for t in termos:
-            n = normalizar(t)
-            if not n or n in vistos:
+    # ---- modo "somar": OU entre os critérios de interesse ----
+    def filter_queryset(self, queryset):
+        dados = self.form.cleaned_data
+        if dados.get("combinar") != "qualquer":
+            return super().filter_queryset(queryset)
+
+        soma = Q()
+        tem_criterio = False
+        for nome, valor in dados.items():
+            if nome == "combinar":
                 continue
-            vistos.append(n)
-            if len(vistos) > MAX_PALAVRAS:
-                break
-            cond |= Q(texto_busca__icontains=condicao_termo(n))
-        return queryset.filter(cond) if vistos else queryset
+            if nome in FILTROS_DE_INTERESSE:
+                cond = self._condicao_interesse(nome, valor)
+                if cond is not None:
+                    soma |= cond
+                    tem_criterio = True
+                continue
+            queryset = self.filters[nome].filter(queryset, valor)
+        return queryset.filter(soma) if tem_criterio else queryset
+
+    @staticmethod
+    def _condicao_interesse(nome, valor):
+        if not valor:
+            return None
+        if nome == "q":
+            return q_qualquer(valor.split(",")) if "," in valor else q_todas(valor)
+        if nome == "palavras":
+            return q_qualquer(valor)
+        if nome == "modalidade":
+            return Q(modalidade__in=[v.strip() for v in valor if v.strip()]) if valor else None
+        if nome == "orgao":
+            return Q(orgao__razao_social__icontains=valor)
+        return None
+
+    # ---- métodos dos filtros (modo "todos") ----
+    def nao_filtra(self, queryset, name, value):
+        return queryset
 
     def filtrar_q(self, queryset, name, value):
         # Com vírgula: lista de alternativas (qualquer uma). Sem vírgula: todas as
         # palavras precisam aparecer (espaço = E), no objeto, número ou órgão.
-        if "," in value:
-            return self._qualquer(queryset, value.split(","))
-        for termo in value.split():
-            n = normalizar(termo)
-            if not n:
-                continue
-            queryset = queryset.filter(
-                Q(texto_busca__icontains=condicao_termo(n)) | Q(numero__icontains=termo)
-            )
-        return queryset
+        cond = q_qualquer(value.split(",")) if "," in value else q_todas(value)
+        return queryset.filter(cond) if cond is not None else queryset
 
     def filtrar_palavras(self, queryset, name, value):
-        return self._qualquer(queryset, value)
+        cond = q_qualquer(value)
+        return queryset.filter(cond) if cond is not None else queryset
 
     def filtrar_uf(self, queryset, name, value):
         return queryset.filter(uf__in=[u.strip().upper() for u in value if u.strip()])

@@ -24,7 +24,7 @@
   const ROTULOS = {
     q: "Palavra-chave", uf: "UF", modalidade: "Modalidade", status: "Status", municipio: "Município",
     valor_min: "Valor mín.", valor_max: "Valor máx.", publicacao_de: "Publicado de",
-    publicacao_ate: "Publicado até", abertas: "Abertas", palavras: "Palavras",
+    publicacao_ate: "Publicado até", abertas: "Abertas", palavras: "Palavras", combinar: "Modo",
   };
   const TOKEN_KEY = "bl.tokens";
 
@@ -197,7 +197,7 @@
   /* ===================== Filtros (busca e alertas) ===================== */
   const FILTRO_KEYS = ["q", "uf", "modalidade", "status", "municipio", "valor_min", "valor_max", "publicacao_de", "publicacao_ate", "abertas"];
   const limpar = (f) => Object.fromEntries(Object.entries(f || {}).filter(([, v]) => v !== "" && v != null && v !== false));
-  const contarFiltros = (f) => Object.keys(limpar(f)).filter((k) => k !== "ordering").length;
+  const contarFiltros = (f) => Object.keys(limpar(f)).filter((k) => k !== "ordering" && k !== "combinar").length;
   const lista = (v) => (v ? String(v).split(",").filter(Boolean) : []);
 
   function filtrosHTML(f = {}, { tags = false } = {}) {
@@ -222,6 +222,13 @@
             <input class="input" name="q" value="${f.q}" enterkeyhint="done"></div>` : ""}`
         : html`<div class="field"><label>Palavra-chave</label>
           <input class="input" name="q" value="${f.q || ""}" placeholder="Ex.: notebook, merenda, obra" enterkeyhint="done"></div>`}
+        <fieldset class="modo">
+          <legend>Como combinar os critérios</legend>
+          <label class="modo-op"><input type="radio" name="combinar" value="todos" ${f.combinar === "qualquer" ? "" : raw("checked")}>
+            <span><b>Restringir</b><small>precisa atender a <u>todos</u> os filtros (palavra-chave <u>e</u> modalidade)</small></span></label>
+          <label class="modo-op"><input type="radio" name="combinar" value="qualquer" ${f.combinar === "qualquer" ? raw("checked") : ""}>
+            <span><b>Somar</b><small>aparece se casar com <u>qualquer</u> palavra-chave <u>ou</u> modalidade escolhida. UF, situação e prazo continuam restringindo</small></span></label>
+        </fieldset>
         <label class="toggle"><span><b>Somente abertas</b><br><span class="small muted">Recebendo propostas agora</span></span>
           <span class="switch"><input type="checkbox" name="abertas" ${f.abertas === "true" ? raw("checked") : ""}><span></span></span></label>
         <div class="field"><label>Estado (UF)</label>${grupo("uf", Object.fromEntries(UFS.map((u) => [u, u])), sel("uf"))}</div>
@@ -250,12 +257,13 @@
       if (v.length) f[k] = v.join(",");
     }
     if ($('[name="abertas"]', root)?.checked) f.abertas = "true";
+    if ($('[name="combinar"]:checked', root)?.value === "qualquer") f.combinar = "qualquer";
     const tags = $("[data-tags]", root);
     if (tags && tags._lista && tags._lista.length) f.palavras = tags._lista.join(",");
     return f;
   }
 
-  const MAX_PALAVRAS = 30;
+  const MAX_PALAVRAS = 60;
 
   /** Chips dos filtros. Palavras-chave: um chip cada, até `max`, depois "+N" (não estoura o layout). */
   function chipsFiltros(f, max = 6) {
@@ -320,10 +328,11 @@
       if (k === "modalidade") t = lista(v).map((x) => MODALIDADES[x] || x).join(", ");
       else if (k === "status") t = lista(v).map((x) => STATUS[x] || x).join(", ");
       else if (k === "abertas") return ROTULOS[k];
+      else if (k === "combinar") return v === "qualquer" ? "Somando critérios" : null;
       else if (k.startsWith("valor")) t = brl.format(Number(v));
       else if (k.startsWith("publicacao")) t = fmtData(v);
       return `${ROTULOS[k]}: ${t}`;
-    });
+    }).filter(Boolean);
   }
 
   /* ===================== Sheet ===================== */
