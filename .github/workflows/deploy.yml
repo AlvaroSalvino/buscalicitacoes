@@ -74,6 +74,7 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script_stop: true
+          command_timeout: 30m   # migrações grandes (ex.: preencher texto_busca) passam de 10 min no padrão
           envs: APP_DIR,APP_USER,SITE_URL
           script: |
             set -euo pipefail

@@ -1,24 +1,33 @@
 from django.db import migrations, models
 
-LOTE = 2000
+LOTE = 5000
 
 
 def preencher(apps, schema_editor):
+    """
+    Preenche texto_busca das licitações existentes. SQL direto em lotes
+    (executemany): ~10x mais rápido que bulk_update em ORM, que gera um CASE
+    gigante por lote e levava minutos com centenas de milhares de linhas.
+    """
     from licitacoes.textos import texto_busca
 
-    Licitacao = apps.get_model("licitacoes", "Licitacao")
+    cursor = schema_editor.connection.cursor()
     ultimo = 0
     while True:
-        lote = list(
-            Licitacao.objects.filter(pk__gt=ultimo)
-            .select_related("orgao").order_by("pk")[:LOTE]
+        cursor.execute(
+            "SELECT l.id, l.objeto, o.razao_social "
+            "FROM licitacoes_licitacao l JOIN licitacoes_orgao o ON o.id = l.orgao_id "
+            "WHERE l.id > %s ORDER BY l.id LIMIT %s",
+            [ultimo, LOTE],
         )
-        if not lote:
+        linhas = cursor.fetchall()
+        if not linhas:
             break
-        for lic in lote:
-            lic.texto_busca = texto_busca(lic.objeto, lic.orgao.razao_social)
-        Licitacao.objects.bulk_update(lote, ["texto_busca"])
-        ultimo = lote[-1].pk
+        cursor.executemany(
+            "UPDATE licitacoes_licitacao SET texto_busca = %s WHERE id = %s",
+            [(texto_busca(objeto, razao), pk) for pk, objeto, razao in linhas],
+        )
+        ultimo = linhas[-1][0]
 
 
 class Migration(migrations.Migration):
