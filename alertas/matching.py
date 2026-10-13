@@ -1,5 +1,5 @@
 """Aplica os filtros salvos de um Alerta sobre um queryset de Licitacao."""
-from licitacoes.filters import LicitacaoFilter
+from licitacoes.filters import MAX_PALAVRAS, MAX_TAMANHO_PALAVRA, LicitacaoFilter
 from licitacoes.models import Licitacao
 
 # `ordering` não faz sentido em um alerta.
@@ -24,6 +24,15 @@ def validar(filtros):
     desconhecidos = sorted(set(dados) - CHAVES_PERMITIDAS)
     if desconhecidos:
         return dados, {"filtros": [f"Filtros desconhecidos: {', '.join(desconhecidos)}."]}
+    if "palavras" in dados:
+        termos = [t.strip() for t in dados["palavras"].split(",") if t.strip()]
+        if len(termos) > MAX_PALAVRAS:
+            return dados, {"filtros": [f"No máximo {MAX_PALAVRAS} palavras-chave."]}
+        longas = [t for t in termos if len(t) > MAX_TAMANHO_PALAVRA]
+        if longas:
+            return dados, {"filtros": [
+                f"Cada palavra-chave pode ter no máximo {MAX_TAMANHO_PALAVRA} caracteres."
+            ]}
     fs = LicitacaoFilter(data=dados, queryset=Licitacao.objects.none())
     if not fs.is_valid():
         return dados, {"filtros": [f"{k}: {' '.join(v)}" for k, v in fs.errors.items()]}

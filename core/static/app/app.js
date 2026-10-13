@@ -24,7 +24,7 @@
   const ROTULOS = {
     q: "Palavra-chave", uf: "UF", modalidade: "Modalidade", status: "Status", municipio: "Município",
     valor_min: "Valor mín.", valor_max: "Valor máx.", publicacao_de: "Publicado de",
-    publicacao_ate: "Publicado até", abertas: "Abertas",
+    publicacao_ate: "Publicado até", abertas: "Abertas", palavras: "Palavras",
   };
   const TOKEN_KEY = "bl.tokens";
 
@@ -200,14 +200,28 @@
   const contarFiltros = (f) => Object.keys(limpar(f)).filter((k) => k !== "ordering").length;
   const lista = (v) => (v ? String(v).split(",").filter(Boolean) : []);
 
-  function filtrosHTML(f = {}) {
+  function filtrosHTML(f = {}, { tags = false } = {}) {
     const sel = (k) => new Set(lista(f[k]));
     const grupo = (nome, opts, marcados) => html`<div class="opts">${Object.entries(opts).map(([v, t]) =>
       html`<label class="opt"><input type="checkbox" name="${nome}" value="${v}" ${marcados.has(v) ? raw("checked") : ""}><span>${t}</span></label>`)}</div>`;
     return html`
       <div class="stack">
-        <div class="field"><label>Palavra-chave</label>
-          <input class="input" name="q" value="${f.q || ""}" placeholder="Ex.: notebook, merenda, obra" enterkeyhint="done"></div>
+        ${tags ? html`
+          <div class="field"><label>Palavras-chave</label>
+            <div class="tags" data-tags data-valor="${f.palavras || ""}">
+              <div class="chips tags-lista" data-tags-lista></div>
+              <div class="tags-add">
+                <input class="input" data-tag-input placeholder="Ex.: notebook ou frase" enterkeyhint="done" maxlength="60" autocapitalize="none">
+                <button type="button" class="btn small" data-tag-add>Adicionar</button>
+              </div>
+              <div class="small muted" data-tags-info></div>
+            </div>
+            <span class="small muted">Avisa quando a licitação contiver <b>qualquer uma</b> das palavras. Use espaços para frases (ex.: material de limpeza).</span>
+          </div>
+          ${f.q ? html`<div class="field"><label>Contém todas as palavras</label>
+            <input class="input" name="q" value="${f.q}" enterkeyhint="done"></div>` : ""}`
+        : html`<div class="field"><label>Palavra-chave</label>
+          <input class="input" name="q" value="${f.q || ""}" placeholder="Ex.: notebook, merenda, obra" enterkeyhint="done"></div>`}
         <label class="toggle"><span><b>Somente abertas</b><br><span class="small muted">Recebendo propostas agora</span></span>
           <span class="switch"><input type="checkbox" name="abertas" ${f.abertas === "true" ? raw("checked") : ""}><span></span></span></label>
         <div class="field"><label>Estado (UF)</label>${grupo("uf", Object.fromEntries(UFS.map((u) => [u, u])), sel("uf"))}</div>
@@ -236,7 +250,68 @@
       if (v.length) f[k] = v.join(",");
     }
     if ($('[name="abertas"]', root)?.checked) f.abertas = "true";
+    const tags = $("[data-tags]", root);
+    if (tags && tags._lista && tags._lista.length) f.palavras = tags._lista.join(",");
     return f;
+  }
+
+  const MAX_PALAVRAS = 30;
+
+  /** Chips dos filtros. Palavras-chave: um chip cada, até `max`, depois "+N" (não estoura o layout). */
+  function chipsFiltros(f, max = 6) {
+    const kws = lista(f.palavras);
+    const resto = { ...f };
+    delete resto.palavras;
+    const base = resumoFiltros(resto).map((t) => html`<span class="chip">${t}</span>`);
+    const vistas = kws.slice(0, max).map((k) => html`<span class="chip kw">${k}</span>`);
+    const extra = kws.length > max ? html`<span class="chip gray">+${kws.length - max}</span>` : "";
+    return html`${vistas}${extra}${base}`;
+  }
+
+  /** Campo de palavras-chave em chips (adicionar/remover). Estado em `el._lista`. */
+  function montarTags(root) {
+    const el = $("[data-tags]", root);
+    if (!el) return;
+    const input = $("[data-tag-input]", el), lista_ = $("[data-tags-lista]", el), info = $("[data-tags-info]", el);
+    el._lista = lista(el.dataset.valor);
+
+    const pintar = () => {
+      lista_.innerHTML = val(el._lista.map((t, i) => html`
+        <span class="chip kw">${t}<button type="button" data-tag-del="${i}" aria-label="Remover ${t}">×</button></span>`));
+      info.textContent = el._lista.length
+        ? `${el._lista.length} de ${MAX_PALAVRAS} palavras` : "Nenhuma palavra adicionada.";
+    };
+    const adicionar = (texto) => {
+      let aviso = "";
+      for (const parte of String(texto).split(/[,;\n]+/)) {
+        const t = parte.replace(/\s+/g, " ").trim().slice(0, 60);
+        if (!t) continue;
+        if (el._lista.some((x) => x.toLowerCase() === t.toLowerCase())) continue;
+        if (el._lista.length >= MAX_PALAVRAS) { aviso = `Limite de ${MAX_PALAVRAS} palavras.`; break; }
+        el._lista.push(t);
+      }
+      pintar();
+      if (aviso) toast(aviso, true);
+    };
+    $("[data-tag-add]", el).onclick = () => { adicionar(input.value); input.value = ""; input.focus(); };
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === ",") {
+        e.preventDefault();
+        adicionar(input.value);
+        input.value = "";
+      }
+    });
+    input.addEventListener("paste", (e) => {
+      const txt = (e.clipboardData || window.clipboardData)?.getData("text") || "";
+      if (/[,;\n]/.test(txt)) { e.preventDefault(); adicionar(txt); }
+    });
+    lista_.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-tag-del]");
+      if (!b) return;
+      el._lista.splice(Number(b.dataset.tagDel), 1);
+      pintar();
+    });
+    pintar();
   }
 
   function resumoFiltros(f) {
@@ -335,7 +410,7 @@
             ${Object.entries(ORDENACOES).map(([v, t]) => html`<option value="${v}" ${b.ordering === v ? raw("selected") : ""}>${t}</option>`)}
           </select>
         </div>
-        ${resumoFiltros(b.filtros).length ? html`<div class="chips">${resumoFiltros(b.filtros).map((t) => html`<span class="chip">${t}</span>`)}</div>` : ""}
+        ${contarFiltros(b.filtros) ? html`<div class="chips">${chipsFiltros(b.filtros, 8)}</div>` : ""}
         <div id="resultados" class="stack"></div>
         <div id="mais" class="center"></div>
       </div>`);
@@ -642,7 +717,7 @@
           <h3 class="grow" style="font-size:16px">${a.nome}</h3>
           ${a.nao_lidas ? html`<a href="#/notificacoes?alerta=${a.id}" class="chip red">${a.nao_lidas} nova${a.nao_lidas > 1 ? "s" : ""}</a>` : ""}
         </div>
-        <div class="chips">${resumoFiltros(a.filtros).map((t) => html`<span class="chip">${t}</span>`)}</div>
+        <div class="chips">${chipsFiltros(a.filtros, 6)}</div>
         <label class="toggle"><span class="small">${a.ativo ? "Ativo" : "Pausado"}${a.notificar_email ? " · avisa por e-mail" : ""}</span>
           <span class="switch"><input type="checkbox" data-act="toggle-alerta" data-id="${a.id}" ${a.ativo ? raw("checked") : ""}><span></span></span></label>
         <div class="row">
@@ -669,7 +744,7 @@
     view().innerHTML = val(html`
       <form class="stack" id="form-alerta">
         <div class="field"><label>Nome do alerta</label><input class="input" name="nome" value="${alerta.nome}" placeholder="Ex.: TI em São Paulo" maxlength="150" required></div>
-        ${filtrosHTML(alerta.filtros)}
+        ${filtrosHTML(alerta.filtros, { tags: true })}
         <label class="toggle"><span><b>Avisar por e-mail</b><br><span class="small muted">${state.user?.email ? "Enviado para " + state.user.email : "Resumo das novas licitações"}</span></span>
           <span class="switch"><input type="checkbox" name="notificar_email" ${alerta.notificar_email ? raw("checked") : ""}><span></span></span></label>
         <label class="toggle"><span><b>Notificar no celular</b><br><span class="small muted">Push, se ativado na aba Conta</span></span>
@@ -679,6 +754,7 @@
         <p class="small" id="erro" style="color:var(--secondary)" hidden></p>
         <button class="btn block">Salvar alerta</button>
       </form>`);
+    montarTags($("#form-alerta"));
     $("#form-alerta").onsubmit = async (e) => {
       e.preventDefault();
       const f = e.target, btn = $("button.btn.block", f);

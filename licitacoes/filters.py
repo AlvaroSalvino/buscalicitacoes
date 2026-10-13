@@ -4,6 +4,9 @@ from django_filters import rest_framework as filters
 
 from .models import Licitacao
 
+MAX_PALAVRAS = 30       # palavras-chave por busca/alerta
+MAX_TAMANHO_PALAVRA = 60
+
 
 class CharInFilter(filters.BaseInFilter, filters.CharFilter):
     """Aceita lista separada por vírgula (?uf=SP,RJ)."""
@@ -15,6 +18,14 @@ class LicitacaoFilter(filters.FilterSet):
         help_text=(
             "Palavra-chave. Cada termo (separado por espaço) precisa aparecer "
             "no objeto, número ou nome do órgão."
+        ),
+    )
+    palavras = CharInFilter(
+        method="filtrar_palavras",
+        help_text=(
+            "Várias palavras-chave separadas por vírgula. Casa se QUALQUER uma "
+            "aparecer no objeto ou no nome do órgão. Um termo com espaços é "
+            "tratado como frase (ex: 'material de limpeza,notebook')."
         ),
     )
     uf = CharInFilter(method="filtrar_uf", help_text="UF(s), ex: SP,RJ.")
@@ -78,6 +89,20 @@ class LicitacaoFilter(filters.FilterSet):
                 | Q(orgao__razao_social__icontains=termo)
             )
         return queryset
+
+    def filtrar_palavras(self, queryset, name, value):
+        termos = []
+        for t in value:
+            t = " ".join(t.split())  # normaliza espaços
+            if t and t.lower() not in [x.lower() for x in termos]:
+                termos.append(t)
+        termos = termos[:MAX_PALAVRAS]
+        if not termos:
+            return queryset
+        cond = Q()
+        for t in termos:
+            cond |= Q(objeto__icontains=t) | Q(orgao__razao_social__icontains=t)
+        return queryset.filter(cond)
 
     def filtrar_uf(self, queryset, name, value):
         return queryset.filter(uf__in=[u.strip().upper() for u in value if u.strip()])

@@ -70,6 +70,42 @@ class AlertaAPITests(TestCase):
         self.assertEqual(r.json()["count"], 1)
 
 
+class PalavrasChaveTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("ana", "ana@x.com", "Senha-forte-123")
+        self.h = _auth(self.client)
+        fonte = Fonte.objects.create(nome="PNCP", tipo_adapter="pncp")
+        orgao = Orgao.objects.create(razao_social="Prefeitura X", esfera="municipal", uf="PI")
+        self.l = {
+            n: Licitacao.objects.create(orgao=orgao, fonte=fonte, id_externo=n, objeto=o, uf="PI")
+            for n, o in {"nb": "Aquisição de notebooks", "imp": "Locação de impressoras",
+                         "lim": "Material de limpeza", "obra": "Obra de pavimentação"}.items()
+        }
+
+    def _criar(self, filtros):
+        return self.client.post(
+            reverse("alerta-list"), {"nome": "kw", "filtros": filtros},
+            content_type="application/json", **self.h,
+        )
+
+    def test_alerta_com_varias_palavras_casa_qualquer_uma(self):
+        r = self._criar({"palavras": ["notebooks", "impressoras", "material de limpeza"]})
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual(r.json()["filtros"]["palavras"], "notebooks,impressoras,material de limpeza")
+        alerta = Alerta.objects.get()
+        ids = [l.pk for l in self.l.values()]
+        with mock.patch("alertas.tasks.enviar_emails_pendentes.delay"),                 mock.patch("alertas.tasks.enviar_push_pendentes.delay"):
+            match_licitacoes(ids)
+        casadas = set(Notificacao.objects.filter(alerta=alerta).values_list("licitacao_id", flat=True))
+        self.assertEqual(casadas, {self.l["nb"].pk, self.l["imp"].pk, self.l["lim"].pk})
+
+    def test_limites(self):
+        muitas = [f"palavra{i}" for i in range(31)]
+        self.assertEqual(self._criar({"palavras": muitas}).status_code, 400)
+        self.assertEqual(self._criar({"palavras": ["x" * 61]}).status_code, 400)
+        self.assertEqual(self._criar({"palavras": [f"p{i}" for i in range(30)]}).status_code, 201)
+
+
 class MatchingTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user("ana", "ana@x.com", "Senha-forte-123")

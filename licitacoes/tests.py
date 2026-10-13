@@ -109,6 +109,17 @@ class LicitacaoAPITests(TestCase):
         resp = self.client.post(reverse("licitacao-list"), {}, **self.h)
         self.assertEqual(resp.status_code, 405)
 
+    def test_palavras_chave_qualquer_uma(self):
+        # l1 "computadores", l2 "limpeza hospitalar", l3 "Material de limpeza"
+        self.assertEqual(self._ids(palavras="computadores,hospitalar"), {self.l1.id, self.l2.id})
+        self.assertEqual(self._ids(palavras="material de limpeza"), {self.l3.id})   # frase
+        self.assertEqual(self._ids(palavras="inexistente"), set())
+        self.assertEqual(self._ids(palavras="COMPUTADORES, campinas"), {self.l1.id, self.l3.id})  # orgao
+        self.assertEqual(self._ids(palavras=" , ,"), {self.l1.id, self.l2.id, self.l3.id})
+
+    def test_palavras_e_outros_filtros_combinam(self):
+        self.assertEqual(self._ids(palavras="limpeza,computadores", uf="SP"), {self.l1.id, self.l3.id})
+
     def test_exige_login(self):
         r = self.client.get(reverse("licitacao-list"))
         self.assertEqual(r.status_code, 401)
