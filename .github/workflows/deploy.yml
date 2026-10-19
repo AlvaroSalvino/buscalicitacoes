@@ -148,40 +148,69 @@ jobs:
               exit 1
             fi
 
-            # Só depois de o site estar saudável: reinicia a atualização automática
-            # com o código novo (se a verificação falhasse, o código teria voltado).
+            # ------------------------------------------------------------------
+            # Só depois de o site estar saudável: (re)inicia a atualização
+            # automática com o código novo. Este passo NUNCA derruba nem reverte o
+            # site (ele já está no ar): cada falha é impressa com o motivo e o job
+            # termina vermelho no fim, para você ver.
+            # ------------------------------------------------------------------
+            set +e +o pipefail
+            trap - ERR
+            AVISOS=0
+            aviso() { echo "### AVISO: $*"; AVISOS=1; }
+
             echo "== 8/8 Atualização automática (Celery worker + beat)"
-            # nomes antigos (se algum dia existiram) saem de cena
-            for u in celery-worker celery-beat; do
-              if systemctl list-unit-files | grep -q "^$u.service"; then
-                sudo systemctl disable --now "$u" || true
-              fi
-            done
-            if ! systemctl is-active --quiet redis-server; then
-              echo "### AVISO: redis-server não está ativo. A atualização automática NÃO foi iniciada."
-              echo "###        Instale/ligue o Redis (veja deploy/LEIA-ME.md). O site segue no ar."
+            if ! sudo -n true 2>/dev/null; then
+              aviso "o usuário do deploy não tem sudo sem senha; não dá para instalar/reiniciar os serviços."
+            elif ! command -v systemctl >/dev/null 2>&1; then
+              aviso "systemctl não encontrado."
             else
-              RELOAD=0
-              for u in buscalicitacoes-worker buscalicitacoes-beat; do
-                if ! sudo cmp -s "deploy/systemd/$u.service" "/etc/systemd/system/$u.service"; then
-                  sudo cp "deploy/systemd/$u.service" "/etc/systemd/system/$u.service"
-                  RELOAD=1
+              # nomes antigos (se algum dia existiram) saem de cena
+              for u in celery-worker celery-beat; do
+                if [ -f "/etc/systemd/system/$u.service" ]; then
+                  sudo systemctl disable --now "$u" 2>&1 | tail -1
                 fi
               done
-              [ "$RELOAD" = 1 ] && sudo systemctl daemon-reload
-              for u in buscalicitacoes-worker buscalicitacoes-beat; do
-                sudo systemctl enable "$u" >/dev/null 2>&1 || true
-                sudo systemctl restart "$u"
-              done
-              sleep 5
-              for u in buscalicitacoes-worker buscalicitacoes-beat; do
-                if systemctl is-active --quiet "$u"; then
-                  echo "   $u: ativo"
-                else
-                  echo "### AVISO: $u não subiu. Últimas linhas do log:"
-                  sudo journalctl -u "$u" -n 25 --no-pager || true
+
+              if ! systemctl is-active --quiet redis-server; then
+                aviso "redis-server não está ativo (systemctl is-active redis-server)."
+                echo "   O Redis precisa estar rodando para o Celery (veja deploy/LEIA-ME.md)."
+              else
+                RELOAD=0
+                for u in buscalicitacoes-worker buscalicitacoes-beat; do
+                  src="deploy/systemd/$u.service"; dst="/etc/systemd/system/$u.service"
+                  if [ ! -f "$src" ]; then aviso "$src não existe no repositório."; continue; fi
+                  if ! sudo cmp -s "$src" "$dst"; then
+                    if sudo cp "$src" "$dst"; then
+                      echo "   $u: unidade instalada/atualizada"; RELOAD=1
+                    else
+                      aviso "não consegui copiar $src para $dst."
+                    fi
+                  fi
+                done
+                if [ "$RELOAD" = 1 ]; then
+                  sudo systemctl daemon-reload || aviso "systemctl daemon-reload falhou."
                 fi
-              done
+                for u in buscalicitacoes-worker buscalicitacoes-beat; do
+                  sudo systemctl enable "$u" 2>&1 | tail -1
+                  sudo systemctl restart "$u" || aviso "systemctl restart $u falhou."
+                done
+                sleep 6
+                for u in buscalicitacoes-worker buscalicitacoes-beat; do
+                  if systemctl is-active --quiet "$u"; then
+                    echo "   $u: ativo"
+                  else
+                    aviso "$u não está ativo. Estado e últimas linhas do log:"
+                    sudo systemctl status "$u" --no-pager -n 0 2>&1 | head -12
+                    sudo journalctl -u "$u" -n 30 --no-pager 2>&1
+                  fi
+                done
+              fi
             fi
 
+            echo "Site atualizado: $NEW"
+            if [ "$AVISOS" != 0 ]; then
+              echo "### O site está no ar com o código novo, mas a atualização automática (Celery) precisa de atenção (avisos acima)."
+              exit 1
+            fi
             echo "Deploy concluído: $NEW"
