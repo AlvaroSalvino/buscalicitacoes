@@ -1,0 +1,19 @@
+[Unit]
+Description=Busca Licitações - agendador Celery beat (atualização automática diária)
+After=network.target redis-server.service buscalicitacoes-worker.service
+Wants=redis-server.service
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/home/meu_app/public_html/buscalicitacoes
+# Apenas UMA instância do beat pode existir (senão as tarefas disparam em dobro).
+ExecStart=/home/meu_app/public_html/buscalicitacoes/venv/bin/celery -A buscalicitacoes beat \
+    --loglevel=info --schedule=/home/meu_app/public_html/buscalicitacoes/celerybeat-schedule
+Restart=always
+RestartSec=10
+SyslogIdentifier=buscalicitacoes-beat
+
+[Install]
+WantedBy=multi-user.target

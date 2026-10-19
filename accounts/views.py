@@ -10,11 +10,13 @@ from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import generics, status
-from rest_framework.permissions import AllowAny, BasePermission, IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenObtainPairView
+
+from core.permissions import IsSuperuser
 
 from .models import Convite
 from .serializers import (
@@ -24,12 +26,6 @@ from .serializers import (
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
-
-
-class IsSuperuser(BasePermission):
-    def has_permission(self, request, view):
-        u = request.user
-        return bool(u and u.is_authenticated and u.is_superuser)
 
 
 class AuthThrottle(AnonRateThrottle):

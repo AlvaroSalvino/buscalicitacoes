@@ -1,0 +1,23 @@
+[Unit]
+Description=Busca Licitações - worker Celery (sincronização das fontes, alertas, e-mail e push)
+After=network.target redis-server.service
+Wants=redis-server.service
+
+[Service]
+Type=simple
+# Mesmo usuário do Apache/WSGI: o SQLite (db.sqlite3, -wal, -shm) nunca fica com dono diferente.
+User=www-data
+Group=www-data
+WorkingDirectory=/home/meu_app/public_html/buscalicitacoes
+# As variáveis vêm do .env do projeto (carregado pelo settings.py).
+# concurrency=2: um sync longo (PNCP) não impede os demais; --max-tasks-per-child recicla memória.
+ExecStart=/home/meu_app/public_html/buscalicitacoes/venv/bin/celery -A buscalicitacoes worker \
+    --loglevel=info --concurrency=2 --max-tasks-per-child=50 --hostname=buscalicitacoes@%%h
+Restart=always
+RestartSec=10
+# Parada limpa: deixa terminar o item corrente; sync interrompido é marcado como erro e refeito.
+TimeoutStopSec=120
+SyslogIdentifier=buscalicitacoes-worker
+
+[Install]
+WantedBy=multi-user.target

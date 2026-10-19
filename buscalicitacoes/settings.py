@@ -1,4 +1,6 @@
 from pathlib import Path
+
+from celery.schedules import crontab
 from dotenv import load_dotenv
 import os
 import sys
@@ -105,6 +107,9 @@ else:
             'OPTIONS': {
                 'init_command': 'PRAGMA journal_mode=WAL;',
                 'transaction_mode': 'IMMEDIATE',
+                # Espera até 30 s por um bloqueio de escrita (sync do Celery
+                # gravando) em vez de falhar com "database is locked" após 5 s.
+                'timeout': 30,
             },
         }
     }
@@ -164,12 +169,35 @@ CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = TIME_ZONE
 
-# Beat: a cada minuto verifica quais fontes estão com o intervalo de sync vencido.
-# O intervalo real por Fonte é decidido na task (Fonte.intervalo_sync_minutos).
+# Redis costuma ser compartilhado com outros projetos: fila e prefixo próprios
+# evitam que workers de projetos diferentes consumam tarefas uns dos outros.
+CELERY_TASK_DEFAULT_QUEUE = os.getenv("CELERY_QUEUE", "buscalicitacoes")
+CELERY_BROKER_TRANSPORT_OPTIONS = {
+    "global_keyprefix": os.getenv("CELERY_KEY_PREFIX", "buscalic:"),
+}
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1       # tarefas longas: pega uma por vez
+CELERY_TASK_IGNORE_RESULT = True            # o resultado fica em SincronizacaoLog
+CELERY_TASK_SOFT_TIME_LIMIT = 3 * 3600      # sync travado não fica horas pendurado
+CELERY_TASK_TIME_LIMIT = 3 * 3600 + 600
+
+# Beat (agendador). Atualização automática, sem ninguém precisar rodar nada:
+#  - a cada minuto: dispara o sync das fontes cujo intervalo venceu
+#    (Fonte.intervalo_sync_minutos: PNCP 60 min, TCE-PI 2 h, TCE-MA 6 h, TCE-CE 24 h);
+#  - todo dia 03:30: marca como encerradas as licitações com prazo vencido;
+#  - todo dia 04:00: limpa logs de sincronização antigos.
 CELERY_BEAT_SCHEDULE = {
     "agendar-syncs-fontes": {
         "task": "integracoes.tasks.agendar_syncs",
         "schedule": 60.0,
+    },
+    "encerrar-licitacoes-vencidas": {
+        "task": "integracoes.tasks.encerrar_vencidas",
+        "schedule": crontab(hour=3, minute=30),
+    },
+    "limpar-logs-de-sync": {
+        "task": "integracoes.tasks.limpar_logs_antigos",
+        "schedule": crontab(hour=4, minute=0),
     },
 }
 

@@ -2,7 +2,10 @@ import logging
 from datetime import timedelta
 
 from celery import shared_task
+from django.db.models import Max
 from django.utils import timezone
+
+from licitacoes.models import Licitacao
 
 from .adapters import AdapterError
 from .models import Fonte, SincronizacaoLog
@@ -83,3 +86,40 @@ def agendar_syncs():
             sync_fonte.delay(fonte.pk)
             disparadas.append(fonte.pk)
     return disparadas
+
+
+@shared_task
+def encerrar_vencidas():
+    """
+    Diário. Licitações "publicada"/"aberta" cujo prazo de propostas já passou
+    viram "encerrada". Os adapters só derivam o status quando o registro é
+    reimportado; sem isto, o que não é mais tocado pelo órgão ficaria "aberta"
+    para sempre na listagem por status.
+    """
+    n = Licitacao.objects.filter(
+        status__in=[Licitacao.Status.PUBLICADA, Licitacao.Status.ABERTA],
+        data_encerramento_propostas__lt=timezone.now(),
+    ).update(status=Licitacao.Status.ENCERRADA, atualizado_em=timezone.now())
+    logger.info("encerrar_vencidas: %d licitações encerradas", n)
+    return {"encerradas": n}
+
+
+@shared_task
+def limpar_logs_antigos(dias=60):
+    """
+    Diário. Apaga logs de sync com mais de `dias` dias, preservando o último
+    SUCESSO de cada fonte (é ele que define a janela do próximo sync
+    incremental) e os que ainda estão em execução.
+    """
+    corte = timezone.now() - timedelta(days=dias)
+    manter = set(
+        SincronizacaoLog.objects.filter(status=SincronizacaoLog.Status.SUCESSO)
+        .values("fonte").annotate(ultimo=Max("id")).values_list("ultimo", flat=True)
+    )
+    apagados, _ = (
+        SincronizacaoLog.objects.filter(iniciado_em__lt=corte)
+        .exclude(status=SincronizacaoLog.Status.EM_EXECUCAO)
+        .exclude(pk__in=manter)
+        .delete()
+    )
+    return {"apagados": apagados}

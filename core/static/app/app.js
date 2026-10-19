@@ -888,12 +888,18 @@
             <p class="small" id="erro-senha" style="color:var(--secondary)" hidden></p>
             <button class="btn secondary">Enviar e-mail de redefinição</button>
           </form>
+        </div>
+        <div class="card stack">
+          <div class="row between"><div><b>Atualização automática</b>
+            <div class="small muted">O servidor busca novas licitações sozinho, todos os dias.</div></div>
+            <button class="btn text small" data-act="fontes-recarregar" aria-label="Atualizar situação">Atualizar</button></div>
+          <div id="fontes-lista"><div class="spinner"></div></div>
         </div>` : ""}
         ${pushHTML}
         ${instalarHTML()}
         <button class="btn ghost red block" data-act="sair">Sair da conta</button>
       </div>`);
-    if (u.is_superuser) { montarConvites(); montarSenha(); }
+    if (u.is_superuser) { montarConvites(); montarSenha(); carregarFontes(); }
     $("#form-conta").onsubmit = async (e) => {
       e.preventDefault();
       try {
@@ -940,6 +946,43 @@
       }
       btn.disabled = false;
     };
+  }
+
+  /** "há 12 min" / "em 3 h" a partir de um ISO. */
+  function relativo(iso) {
+    if (!iso) return "—";
+    const min = Math.round((new Date(iso) - Date.now()) / 60000);
+    const a = Math.abs(min);
+    const t = a < 60 ? `${a} min` : a < 1440 ? `${Math.round(a / 60)} h` : `${Math.round(a / 1440)} d`;
+    if (min <= 0 && a < 2) return "agora";
+    return min < 0 ? `há ${t}` : `em ${t}`;
+  }
+
+  async function carregarFontes() {
+    const box = $("#fontes-lista");
+    if (!box) return;
+    try {
+      const fontes = await api("/fontes/status/");
+      box.innerHTML = val(html`<div class="stack" style="gap:12px">${fontes.map((f) => {
+        const u = f.ultimo;
+        const rodando = u && u.status === "em_execucao";
+        const [cls, rotulo] = !f.ativo ? ["gray", "pausada"]
+          : f.atrasada ? ["red", "atrasada"]
+          : rodando ? ["", "sincronizando"]
+          : u && u.status === "erro" ? ["red", "erro"]
+          : u && u.status === "parcial" ? ["", "parcial"]
+          : ["green", "em dia"];
+        return html`
+          <div class="stack" style="gap:6px">
+            <div class="row between"><b style="overflow-wrap:anywhere;min-width:0">${f.nome}</b><span class="chip ${cls}">${rotulo}</span></div>
+            <div class="small muted">${f.total_licitacoes.toLocaleString("pt-BR")} licitações ·
+              última execução ${relativo(u && (u.finalizado_em || u.iniciado_em))}${u && u.status !== "em_execucao" ? ` (${u.itens} itens)` : ""} ·
+              próxima ${f.ativo ? relativo(f.proxima_em) : "—"}</div>
+            ${u && u.erro ? html`<div class="small" style="color:var(--secondary);overflow-wrap:anywhere">${u.erro.split("\n")[0]}</div>` : ""}
+            <div><button class="btn ghost small" data-act="sync-agora" data-id="${f.id}" ${rodando ? raw("disabled") : ""}>Sincronizar agora</button></div>
+          </div>`;
+      })}</div>`);
+    } catch (e) { box.innerHTML = val(html`<p class="small muted">${e.texto}</p>`); }
   }
 
   function montarSenha() {
@@ -1093,6 +1136,13 @@
         body: "É assim que você será avisado das novas licitações.",
         icon: "/static/app/icon-192.png", badge: "/static/app/icon-192.png", data: { url: "/#/notificacoes" },
       });
+    },
+    "fontes-recarregar": () => carregarFontes(),
+    "sync-agora": async (el) => {
+      el.disabled = true;
+      try { await api(`/fontes/${el.dataset.id}/sincronizar/`, { method: "POST" }); toast("Sincronização iniciada"); }
+      catch (e) { toast(e.texto, true); }
+      setTimeout(carregarFontes, 2500);
     },
     "copiar-link": async () => {
       try { await navigator.clipboard.writeText(state.ultimoLink || ""); toast("Link copiado"); }

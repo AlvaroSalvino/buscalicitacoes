@@ -21,6 +21,7 @@ urlpatterns = [
     path('api/', include('licitacoes.urls')),
     path('api/', include('accounts.urls')),
     path('api/', include('alertas.urls')),
+    path('api/', include('integracoes.urls')),
     # Documentação da API: só para quem está logado no /admin/ (staff).
     path('api/schema/', SpectacularAPIView.as_view(**_DOCS), name='schema'),
     path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema', **_DOCS), name='swagger-ui'),

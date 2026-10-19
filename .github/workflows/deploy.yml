@@ -94,7 +94,7 @@ jobs:
             PREV=$(git rev-parse HEAD)
             trap 'echo "### FALHA no deploy. Versão anterior: $PREV | backups em $APP_DIR/backups"' ERR
 
-            echo "== 1/7 Backup do banco (antes de QUALQUER mudança)"
+            echo "== 1/8 Backup do banco (antes de QUALQUER mudança)"
             mkdir -p backups && sudo chown "$APP_USER:$APP_USER" backups
             if [ -f db.sqlite3 ]; then
               # .backup é seguro com o banco em uso (inclui o conteúdo do WAL)
@@ -102,7 +102,7 @@ jobs:
               ls -1t backups/db-*.sqlite3 2>/dev/null | tail -n +4 | xargs -r rm -f   # mantém os 3 mais recentes
             fi
 
-            echo "== 2/7 Código"
+            echo "== 2/8 Código"
             # Arquivos do banco NUNCA podem ser tocados pelo git. Versões antigas do
             # repositório versionavam db.sqlite3-wal/-shm (do computador de
             # desenvolvimento): um reset --hard os sobrescreveria e corromperia o
@@ -118,27 +118,22 @@ jobs:
               exit 1
             fi
 
-            echo "== 3/7 Permissões (sem tocar em venv/ e .git/)"
+            echo "== 3/8 Permissões (sem tocar em venv/ e .git/)"
             sudo find . \( -path ./venv -o -path ./.git \) -prune -o -exec chown "$APP_USER:$APP_USER" {} +
             [ "$(stat -c %U venv)" = "$APP_USER" ] || sudo chown -R "$APP_USER:$APP_USER" venv
 
-            echo "== 4/7 Dependências"
+            echo "== 4/8 Dependências"
             run "$PY" -m pip install -q -r requirements.txt
 
-            echo "== 5/7 Verificar, migrar e coletar estáticos"
+            echo "== 5/8 Verificar, migrar e coletar estáticos"
             run "$PY" manage.py check
             run "$PY" manage.py migrate --noinput
             run "$PY" manage.py collectstatic --noinput
 
-            echo "== 6/7 Recarregar aplicação"
+            echo "== 6/8 Recarregar aplicação"
             run touch buscalicitacoes/wsgi.py          # mod_wsgi (daemon) recarrega o código
-            for u in celery-worker celery-beat; do
-              if systemctl list-unit-files | grep -q "^$u.service"; then
-                sudo systemctl restart "$u"
-              fi
-            done
 
-            echo "== 7/7 Verificação de saúde"
+            echo "== 7/8 Verificação de saúde"
             sleep 5
             home=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$SITE_URL/" || true)
             api=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$SITE_URL/api/licitacoes/" || true)
@@ -152,4 +147,41 @@ jobs:
               echo "### Atenção: migrações já aplicadas NÃO são desfeitas. Backup: $APP_DIR/backups"
               exit 1
             fi
+
+            # Só depois de o site estar saudável: reinicia a atualização automática
+            # com o código novo (se a verificação falhasse, o código teria voltado).
+            echo "== 8/8 Atualização automática (Celery worker + beat)"
+            # nomes antigos (se algum dia existiram) saem de cena
+            for u in celery-worker celery-beat; do
+              if systemctl list-unit-files | grep -q "^$u.service"; then
+                sudo systemctl disable --now "$u" || true
+              fi
+            done
+            if ! systemctl is-active --quiet redis-server; then
+              echo "### AVISO: redis-server não está ativo. A atualização automática NÃO foi iniciada."
+              echo "###        Instale/ligue o Redis (veja deploy/LEIA-ME.md). O site segue no ar."
+            else
+              RELOAD=0
+              for u in buscalicitacoes-worker buscalicitacoes-beat; do
+                if ! sudo cmp -s "deploy/systemd/$u.service" "/etc/systemd/system/$u.service"; then
+                  sudo cp "deploy/systemd/$u.service" "/etc/systemd/system/$u.service"
+                  RELOAD=1
+                fi
+              done
+              [ "$RELOAD" = 1 ] && sudo systemctl daemon-reload
+              for u in buscalicitacoes-worker buscalicitacoes-beat; do
+                sudo systemctl enable "$u" >/dev/null 2>&1 || true
+                sudo systemctl restart "$u"
+              done
+              sleep 5
+              for u in buscalicitacoes-worker buscalicitacoes-beat; do
+                if systemctl is-active --quiet "$u"; then
+                  echo "   $u: ativo"
+                else
+                  echo "### AVISO: $u não subiu. Últimas linhas do log:"
+                  sudo journalctl -u "$u" -n 25 --no-pager || true
+                fi
+              done
+            fi
+
             echo "Deploy concluído: $NEW"
