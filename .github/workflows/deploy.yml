@@ -158,7 +158,15 @@ jobs:
             set +e +o pipefail
             trap - ERR
             AVISOS=0
-            aviso() { echo "### AVISO: $*"; AVISOS=1; }
+            AVISO_FILE="$APP_DIR/backups/ultimo-aviso-celery.txt"
+            : > "$AVISO_FILE"
+            aviso() { echo "### AVISO: $*"; echo "$*" >> "$AVISO_FILE"; AVISOS=1; }
+            # Redis pode ter outro nome de serviço (redis-server, redis) ou rodar fora do systemd:
+            # o que importa é aceitar conexões.
+            redis_ok() {
+              systemctl is-active --quiet redis-server || systemctl is-active --quiet redis \
+                || (exec 3<>/dev/tcp/127.0.0.1/6379) 2>/dev/null
+            }
 
             echo "== 8/8 Atualização automática (Celery worker + beat)"
             if ! sudo -n true 2>/dev/null; then
@@ -173,8 +181,8 @@ jobs:
                 fi
               done
 
-              if ! systemctl is-active --quiet redis-server; then
-                aviso "redis-server não está ativo (systemctl is-active redis-server)."
+              if ! redis_ok; then
+                aviso "Redis não responde em 127.0.0.1:6379 (nem redis-server nem redis estão ativos)."
                 echo "   O Redis precisa estar rodando para o Celery (veja deploy/LEIA-ME.md)."
               else
                 RELOAD=0
@@ -211,7 +219,9 @@ jobs:
 
             echo "Site atualizado: $NEW"
             if [ "$AVISOS" != 0 ]; then
-              echo "### O site está no ar com o código novo, mas a atualização automática (Celery) precisa de atenção (avisos acima)."
+              echo "### O site está no ar com o código novo, mas a atualização automática (Celery) precisa de atenção."
+              echo "### Motivo(s): $(tr '\n' ';' < "$AVISO_FILE")"
+              echo "### Detalhe no servidor: cat $AVISO_FILE"
               exit 1
             fi
             echo "Deploy concluído: $NEW"
