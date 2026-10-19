@@ -9,7 +9,9 @@ User=www-data
 Group=www-data
 WorkingDirectory=/home/meu_app/public_html/buscalicitacoes
 # Apenas UMA instância do beat pode existir (senão as tarefas disparam em dobro).
-ExecStart=/home/meu_app/public_html/buscalicitacoes/venv/bin/celery -A buscalicitacoes beat \
+# 'python -m celery' em vez de venv/bin/celery: não depende do bit de execução nem do
+# shebang do script (um chmod -R antigo já removeu o +x de venv/bin e causou status=203/EXEC).
+ExecStart=/home/meu_app/public_html/buscalicitacoes/venv/bin/python -m celery -A buscalicitacoes beat \
     --loglevel=info --schedule=/home/meu_app/public_html/buscalicitacoes/celerybeat-schedule
 Restart=always
 RestartSec=10

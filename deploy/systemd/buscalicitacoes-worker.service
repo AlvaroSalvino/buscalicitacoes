@@ -11,7 +11,9 @@ Group=www-data
 WorkingDirectory=/home/meu_app/public_html/buscalicitacoes
 # As variáveis vêm do .env do projeto (carregado pelo settings.py).
 # concurrency=2: um sync longo (PNCP) não impede os demais; --max-tasks-per-child recicla memória.
-ExecStart=/home/meu_app/public_html/buscalicitacoes/venv/bin/celery -A buscalicitacoes worker \
+# 'python -m celery' em vez de venv/bin/celery: não depende do bit de execução nem do
+# shebang do script (um chmod -R antigo já removeu o +x de venv/bin e causou status=203/EXEC).
+ExecStart=/home/meu_app/public_html/buscalicitacoes/venv/bin/python -m celery -A buscalicitacoes worker \
     --loglevel=info --concurrency=2 --max-tasks-per-child=50 --hostname=buscalicitacoes@%%h
 Restart=always
 RestartSec=10

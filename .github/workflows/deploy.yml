@@ -121,6 +121,7 @@ jobs:
             echo "== 3/8 Permissões (sem tocar em venv/ e .git/)"
             sudo find . \( -path ./venv -o -path ./.git \) -prune -o -exec chown "$APP_USER:$APP_USER" {} +
             [ "$(stat -c %U venv)" = "$APP_USER" ] || sudo chown -R "$APP_USER:$APP_USER" venv
+            sudo chmod -R a+rX venv/bin && sudo chmod a+x venv/bin/* 2>/dev/null || true   # um chmod -R antigo tirou o +x (causa de status=203/EXEC)
 
             echo "== 4/8 Dependências"
             run "$PY" -m pip install -q -r requirements.txt
